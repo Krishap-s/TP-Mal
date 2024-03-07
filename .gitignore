@@ -1,0 +1,5 @@
+poc_payload
+poc_server
+go.sum
+PoC/server/keys/private.*
+PoC/server/keys/public.*
