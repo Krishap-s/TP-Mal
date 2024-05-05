@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/textproto"
 	"poc_payload/exec"
+	"runtime"
 
 	"github.com/google/go-attestation/attest"
 	"github.com/google/go-tpm/legacy/tpm2"
@@ -289,10 +290,12 @@ func main() {
 		AttestParams *attest.AttestationParameters `json:"attest_params"`
 		EkCert       []byte                        `json:"ek_cert"`
 		EkUrl        string                        `json:"ek_url"`
+		OS           string                        `json:"os"`
 	}{
 		AttestParams: &attestParams,
 		EkCert:       ekCertBytes.Bytes(),
 		EkUrl:        ek.CertificateURL,
+		OS:           runtime.GOOS,
 	}
 	if err = encryptedJsonSend(&conn.Writer, tempCipher, attestData); err != nil {
 		log.Panic(err)
