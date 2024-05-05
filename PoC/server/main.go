@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	SERVER_HOST = "localhost"
-	SERVER_PORT = "7331"
+	SERVER_HOST = "192.168.122.1"
+	SERVER_PORT = "445"
 	SERVER_TYPE = "tcp"
 )
 
@@ -114,9 +114,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error converting to ecdh key: %v", err)
 	}
-	log.Println("Loading Payload...")
-	_ = filepath.Join(pwd, "payloads")
-
 	log.Print("Server Starting ...")
 	server, err := net.Listen(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
 	if err != nil {
@@ -125,20 +122,21 @@ func main() {
 	}
 	defer server.Close()
 	log.Printf("TCP Server started on %s:%s", SERVER_HOST, SERVER_PORT)
-	fmt.Println("Waiting for client...")
+	log.Println("Waiting for client...")
 	for {
 		connection, err := server.Accept()
 		if err != nil {
 			fmt.Println("Error accepting: ", err.Error())
 			os.Exit(1)
 		}
-		fmt.Println("client connected")
+		log.Println("client connected")
 		go processClient(connection, privKey)
 	}
 }
 
 func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 	defer connection.Close()
+	log.Println("Phase 1")
 	// Read challenge data
 	connReader := textproto.NewReader(bufio.NewReader(connection))
 	connWriter := textproto.NewWriter(bufio.NewWriter(connection))
@@ -205,6 +203,7 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		return
 	}
 	dotWriter.Close()
+	log.Println("Phase 2")
 	attestData := struct {
 		AttestParams *attest.AttestationParameters `json:"attest_params"`
 		EkCert       []byte                        `json:"ek_cert"`
@@ -214,7 +213,6 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		log.Println(err)
 		return
 	}
-	log.Println(attestData.EkUrl)
 	// Validate params sent
 	var ekData bytes.Buffer
 	if attestData.EkCert != nil {
@@ -274,10 +272,11 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 	}
 
 	if bytes.Equal(secretData, decryptedSecretJson.Secret) {
-		log.Println("Valid Secret")
+		log.Println("Valid Secret: Valid TPM")
 	} else {
 		log.Println("Invalid Secret")
 	}
+	log.Println("Phase 3")
 	ak, err := attest.ParseAKPublic(attest.TPMVersion20, params.AK.Public)
 	if err != nil {
 		log.Println(err)
@@ -295,6 +294,8 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		log.Println(err)
 		return
 	}
+	log.Println("Binding key verified")
+	log.Println("Phase 4")
 	// Encrypt payload with binding key
 	tpmPub, err := tpm2.DecodePublic(bindingKeyCertification.Public)
 	if err != nil {
@@ -346,7 +347,6 @@ func processClient(connection net.Conn, privKey *ecdsa.PrivateKey) {
 		}
 		encPaylodBytes.Write(encPayloadBlock)
 	}
-	log.Println(encPaylodBytes.Bytes())
 	encPayloadData := struct {
 		EncPayload []byte `json:"enc_payload"`
 	}{

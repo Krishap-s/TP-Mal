@@ -27,8 +27,8 @@ import (
 
 var (
 	pubKeyBase64    = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIqnQpX0arufowZEfxbGaFA+0GTg+pZb86WNqrqAyIADOADEVvq3ehK6W9oybQSQ1ve9e+jyoSrjRU3l1fJBO6A=="
-	ip              = "127.0.0.1"
-	port            = 7331
+	ip              = "192.168.122.1"
+	port            = 445
 	encPayloadBytes bytes.Buffer
 	payloadBytes    bytes.Buffer
 )
@@ -208,7 +208,6 @@ func main() {
 	if err != nil {
 		log.Panicf("Unable to get contents of outpoint : %v", err)
 	}
-	log.Printf("ECDH X: %v", outPointTPM.X.Buffer)
 	// Flush previous objects
 	flushPrimaryContext := FlushContext{
 		FlushHandle: tpmPrimaryRsp.ObjectHandle,
@@ -244,9 +243,9 @@ func main() {
 	nonce := make([]byte, tempCipher.NonceSize())
 	rand.Read(nonce)
 	challengeRsp := make([]byte, 16)
-	log.Printf("Challenge: %v", getRandomRsp.RandomBytes.Buffer)
 	challenge := tempCipher.Seal(nonce, nonce, getRandomRsp.RandomBytes.Buffer, nil)
 	// Connect to server
+	log.Println("Phase 1")
 	conn, err := textproto.Dial("tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
 		log.Panicf("Unable to connect to server: %v", err)
@@ -275,10 +274,11 @@ func main() {
 	io.ReadFull(conn.DotReader(), challengeRsp)
 	log.Printf("Challenge Resp: %v", challengeRsp)
 	if !bytes.Equal(getRandomRsp.RandomBytes.Buffer, challengeRsp) {
-		log.Fatalf("Invalid key")
+		log.Fatalf("Invalid challenge")
 	} else {
-		log.Println("Valid key")
+		log.Println("Valid Challenge, Server verified")
 	}
+	log.Println("Phase 2")
 	// Send ek cert ,ak public and attest params
 	var ekCertBytes bytes.Buffer
 	// There might not be a certificate stored in nv storage, hence handle the case where it might be stored
@@ -315,6 +315,7 @@ func main() {
 		log.Panic(err)
 	}
 
+	log.Println("Phase 3")
 	// Create Binding Key
 	tpmPrimary = CreatePrimary{
 		PrimaryHandle: TPMRHEndorsement,
@@ -384,6 +385,8 @@ func main() {
 	encPayloadData := struct {
 		EncPayload []byte `json:"enc_payload"`
 	}{}
+
+	log.Println("Phase 4")
 	if err = encryptedJsonRead(&conn.Reader, tempCipher, &encPayloadData); err != nil {
 		log.Panic(err)
 	}
